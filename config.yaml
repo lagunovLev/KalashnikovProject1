@@ -1,0 +1,31 @@
+project_name: "Kalashnikov Boosting Pipeline"
+
+paths:
+  raw_consumption: "data/raw/consumption.csv"
+  raw_production: "data/raw/production.csv"
+  combined_data: "data/interim/combined.csv"
+  clear_data: "data/processed/clear.csv"
+  filtered_data: "data/processed/filtered.csv"
+  features_data: "data/processed/features.csv"
+  models_dir: "models"
+  reports_dir: "reports"
+  state_file: "pipeline_state.json"
+
+features:
+  target_column: "Продукция"
+  date_column: "Дата"
+  shop_column: "Цех"
+  drop_columns: []
+  outlier_threshold: 3.0 # Z-score для фильтрации выбросов
+
+training:
+  test_size: 0.2
+  val_size: 0.2
+  random_state: 42
+  optuna_trials: 3
+  models: ["xgboost", "lightgbm", "catboost"]
+
+# Параметры чтения (автоматически определяются или задаются здесь)
+csv_params:
+  encoding: "utf-8"
+  sep: ","
