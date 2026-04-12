@@ -16,13 +16,13 @@ features:
   date_column: "Дата"
   shop_column: "Цех"
   drop_columns: []
-  outlier_threshold: 3.0 # Z-score для фильтрации выбросов
+  outlier_threshold: 1.5 # Z-score для фильтрации выбросов
 
 training:
   test_size: 0.2
   val_size: 0.2
   random_state: 42
-  optuna_trials: 3
+  optuna_trials: 30
   models: ["xgboost", "lightgbm", "catboost"]
 
 # Параметры чтения (автоматически определяются или задаются здесь)
