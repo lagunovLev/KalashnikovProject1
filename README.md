@@ -71,3 +71,16 @@ uv run python main.py --stage 6 --model xgboost
 - `optuna_trials`: Количество попыток подбора параметров (установите 50-100 для качества).
 - `drop_columns`: Список колонок, которые будут удалены перед обучением.
 - `test_size` / `val_size`: Пропорции разделения выборки.
+
+
+$env:Path = "C:\Users\l.d.lagunov\.local\bin;$env:Path"
+set Path=C:\Users\l.d.lagunov\.local\bin;%Path%
+
+
+
+
+Лучшие метрики:
+Model,RMSE,MAE,R2
+XGBoost,445.99027806108063,376.5196838378906,0.06926453113555908
+LightGBM,445.39037834918554,375.96834058555515,0.07176662972936454
+CatBoost,445.46309756616057,374.917578181411,0.07146349828531817

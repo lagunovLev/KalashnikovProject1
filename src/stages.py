@@ -9,8 +9,8 @@ from sklearn.preprocessing import LabelEncoder
 def combine_data(consumption_path, production_path, output_path, config):
     """Этап 1: Объединение данных."""
     print("Stage 1: Combining data...")
-    cons = pd.read_csv(consumption_path)
-    prod = pd.read_csv(production_path)
+    cons = pd.read_csv(consumption_path, encoding='utf-8')
+    prod = pd.read_csv(production_path, encoding='utf-8')
     date_col = config['features']['date_column']
     shop_col = config['features']['shop_column']
     cons[date_col] = pd.to_datetime(cons[date_col])
@@ -60,26 +60,29 @@ def feature_engineering(input_path, output_path, config):
     df['day_sin'] = np.sin(2 * np.pi * df['day'] / 31)
     df['day_cos'] = np.cos(2 * np.pi * df['day'] / 31)
     df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
+
+    df = df.drop(columns=date_col)
     
     # 2. Target Encoding для Артикулов и Цехов
     # Мы создаем НОВЫЕ колонки, не удаляя старые
-    cols_for_target_enc = ['Артикул продукции', 'Артикул материала', 'Цех']
-    smoothing = 10 # Коэффициент сглаживания
-    global_mean = df[target].mean()
+    #cols_for_target_enc = ['Артикул продукции', 'Артикул материала', 'Цех']
+    #smoothing = 10 # Коэффициент сглаживания
+    #global_mean = df[target].mean()
     
-    for col in cols_for_target_enc:
-        if col in df.columns:
-            print(f"Adding Target Encoding for {col}...")
-            agg = df.groupby(col)[target].agg(['count', 'mean'])
-            counts = agg['count']
-            means = agg['mean']
+    #for col in cols_for_target_enc:
+    #    if col in df.columns:
+    #        print(f"Adding Target Encoding for {col}...")
+    #        agg = df.groupby(col)[target].agg(['count', 'mean'])
+    #        counts = agg['count']
+    #        means = agg['mean']
             
-            # Формула сглаженного среднего
-            smooth_mean = (counts * means + smoothing * global_mean) / (counts + smoothing)
-            df[f'{col}_target_enc'] = df[col].map(smooth_mean)
+    #        # Формула сглаженного среднего
+    #        smooth_mean = (counts * means + smoothing * global_mean) / (counts + smoothing)
+    #        df[f'{col}_target_enc'] = df[col].map(smooth_mean)
             
     # 3. Умное кодирование оригинальных текстовых колонок (OHE vs Label)
     # Чтобы модели могли работать с оригинальными данными в числовом виде
+    #cols_to_encode = ['Цех', 'id документа_prod', 'id документа_cons', 'Артикул продукции', 'Артикул материала']
     cols_to_encode = ['Цех', 'id документа_prod', 'id документа_cons', 'Артикул продукции', 'Артикул материала']
     for col in cols_to_encode:
         if col in df.columns:
@@ -112,6 +115,8 @@ def visualize_data(input_path, output_dir, config):
     plt.subplot(1, 2, 1); sns.boxplot(y=df[target]); plt.title(f"Boxplot: {target}")
     plt.subplot(1, 2, 2); sns.boxplot(y=df['Материал']); plt.title("Boxplot: Материал")
     plt.tight_layout(); plt.savefig(os.path.join(output_dir, "boxplots.png")); plt.close()
+
+    print(df.info())
 
 def evaluate_models(X_test, y_test, models_dir, config):
     """Этап 7: Оценка."""
