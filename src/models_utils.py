@@ -43,11 +43,11 @@ class ModelTrainer:
         print("Optimizing XGBoost...")
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
-                'max_depth': trial.suggest_int('max_depth', 3, 10),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 5000),
+                'max_depth': trial.suggest_int('max_depth', 1, 20),
+                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
+                'subsample': trial.suggest_float('subsample', 0.2, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.2, 1.0),
             }
             model = XGBRegressor(**param, random_state=42)
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
@@ -66,10 +66,10 @@ class ModelTrainer:
         print("Optimizing LightGBM...")
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
-                'max_depth': trial.suggest_int('max_depth', -1, 15),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'num_leaves': trial.suggest_int('num_leaves', 20, 150),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 5000),
+                'max_depth': trial.suggest_int('max_depth', -1, 20),
+                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
+                'num_leaves': trial.suggest_int('num_leaves', 5, 150),
             }
             model = LGBMRegressor(**param, random_state=42, verbose=-1)
             model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
@@ -88,10 +88,10 @@ class ModelTrainer:
         print("Optimizing CatBoost...")
         def objective(trial):
             param = {
-                'iterations': trial.suggest_int('iterations', 100, 1000),
-                'depth': trial.suggest_int('depth', 4, 10),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+                'iterations': trial.suggest_int('iterations', 100, 5000),
+                'depth': trial.suggest_int('depth', 1, 20),
+                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
+                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 20),
             }
             model = CatBoostRegressor(**param, random_seed=42, verbose=False)
             model.fit(X_train, y_train, eval_set=(X_val, y_val))

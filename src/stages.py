@@ -18,7 +18,26 @@ def combine_data(consumption_path, production_path, output_path, config):
     cols_to_remove = ['Единицы измерения', 'Наименование продукции', 'Наименование материала']
     cons = cons.drop(columns=[c for c in cols_to_remove if c in cons.columns])
     prod = prod.drop(columns=[c for c in cols_to_remove if c in prod.columns])
-    combined = pd.merge(prod, cons, on=[date_col, shop_col], suffixes=('_prod', '_cons'))
+
+    # fix
+    #cons = cons.groupby([date_col, shop_col]).sum(numeric_only=True).reset_index()
+    #prod = prod.groupby([date_col, shop_col]).sum(numeric_only=True).reset_index()
+
+    combined = pd.merge(prod, cons, on=[date_col, shop_col], suffixes=('_prod', '_cons'), how='inner')
+
+    #if 'Количество_prod' in combined.columns:
+    #    combined['Продукция'] = combined["Количество_prod"]
+    #elif 'Количество' in combined.columns:
+    #    combined['Продукция'] = combined['Количество']
+#
+    #if 'Объём_cons' in combined.columns:
+    #    combined['Материал'] = combined["Объём_cons"]
+    #elif 'Объём' in combined.columns:
+    #    combined['Материал'] = combined['Объём']
+
+    # fix 
+    combined = combined.sort_values(date_col)
+
     combined.rename(columns={'Количество': 'Продукция', 'Объём': 'Материал'}, inplace=True)
     combined.to_csv(output_path, index=False)
     print(f"Saved combined data. Total rows: {len(combined)}")
@@ -28,6 +47,7 @@ def clean_data(input_path, output_path, config):
     print("Stage 2: Cleaning data...")
     df = pd.read_csv(input_path)
     df.dropna(subset=[config['features']['target_column'], 'Материал'], inplace=True)
+    df = df.drop(columns=config['features']['drop_columns'])
     df.to_csv(output_path, index=False)
 
 def filter_outliers(input_path, output_path, config):
@@ -51,15 +71,15 @@ def feature_engineering(input_path, output_path, config):
     df[date_col] = pd.to_datetime(df[date_col])
     
     # 1. Признаки даты
-    df['year'] = df[date_col].dt.year
-    df['month'] = df[date_col].dt.month
-    df['day'] = df[date_col].dt.day
-    df['day_of_week'] = df[date_col].dt.dayofweek
-    df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-    df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
-    df['day_sin'] = np.sin(2 * np.pi * df['day'] / 31)
-    df['day_cos'] = np.cos(2 * np.pi * df['day'] / 31)
-    df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
+    #df['year'] = df[date_col].dt.year
+    #df['month'] = df[date_col].dt.month
+    #df['day'] = df[date_col].dt.day
+    #df['day_of_week'] = df[date_col].dt.dayofweek
+    #df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+    #df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+    #df['day_sin'] = np.sin(2 * np.pi * df['day'] / 31)
+    #df['day_cos'] = np.cos(2 * np.pi * df['day'] / 31)
+    #df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
 
     df = df.drop(columns=date_col)
     
@@ -83,7 +103,7 @@ def feature_engineering(input_path, output_path, config):
     # 3. Умное кодирование оригинальных текстовых колонок (OHE vs Label)
     # Чтобы модели могли работать с оригинальными данными в числовом виде
     #cols_to_encode = ['Цех', 'id документа_prod', 'id документа_cons', 'Артикул продукции', 'Артикул материала']
-    cols_to_encode = ['Цех', 'id документа_prod', 'id документа_cons', 'Артикул продукции', 'Артикул материала']
+    cols_to_encode = ['Цех', 'Артикул продукции', 'Артикул материала']
     for col in cols_to_encode:
         if col in df.columns:
             unique_count = df[col].nunique()
@@ -151,3 +171,7 @@ def plot_feature_importance(models_dir, reports_dir, config):
         plt.title("XGBoost Feature Importance")
         plt.savefig(os.path.join(reports_dir, "feature_importance_xgb.png"))
         plt.close()
+
+def complete_task(models_dir, task_path, output_path, config):
+    """Этап 9: Выполнение задачи"""
+
