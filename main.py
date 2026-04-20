@@ -79,11 +79,11 @@ def run_pipeline(args):
         evaluate_models(X_test, y_test, paths['models_dir'], config)
 
     # --- Stage 8: Plots ---
-    if args.stage <= 8:
-        plot_feature_importance(paths['models_dir'], paths['reports_dir'], config)
+    #if args.stage <= 8:
+    #    plot_feature_importance(paths['models_dir'], paths['reports_dir'], config)
 
     if args.stage <= 9:
-        complete_task(paths['models_dir'], paths['task'], paths['task_output'], config)
+        complete_task(paths['models_dir'], paths['features_data'], paths['task'], paths['task_output'], config)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalashnikov ML Pipeline")

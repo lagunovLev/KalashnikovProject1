@@ -24,10 +24,13 @@ training:
   test_size: 0.2
   val_size: 0.2
   random_state: 42
-  optuna_trials: 20
+  optuna_trials: 1
   models: ["xgboost", "lightgbm", "catboost"]
 
 # Параметры чтения (автоматически определяются или задаются здесь)
 csv_params:
   encoding: "utf-8"
   sep: ","
+
+task:
+  model: "lightgbm"

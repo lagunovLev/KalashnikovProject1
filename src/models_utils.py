@@ -7,15 +7,13 @@ from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error
 
 def get_data_splits(df, config):
     """Разделение данных на train/val/test."""
     target = config['features']['target_column']
     date_col = config['features']['date_column']
     
-    # Теперь здесь нет автоматической фильтрации. 
-    # Все колонки, которые есть в файле (кроме даты и таргета), пойдут в X.
     X = df.drop(columns=[target, date_col], errors='ignore')
     y = df[target]
     
@@ -31,6 +29,7 @@ def get_data_splits(df, config):
     )
     
     return X_train, X_val, X_test, y_train, y_val, y_test
+
 
 class ModelTrainer:
     def __init__(self, config):
@@ -59,7 +58,10 @@ class ModelTrainer:
         
         best_model = XGBRegressor(**study.best_params, random_state=42)
         best_model.fit(X_train, y_train)
-        joblib.dump(best_model, os.path.join(self.models_dir, "xgboost_model.pkl"))
+        joblib.dump({
+          "model": best_model,
+          "feature_names": X_train.columns.tolist()  # <-- вот они
+          }, os.path.join(self.models_dir, "xgboost_model"))
         return best_model
 
     def train_lightgbm(self, X_train, y_train, X_val, y_val):
@@ -79,9 +81,12 @@ class ModelTrainer:
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
-        best_model = LGBMRegressor(**study.best_params, random_state=42)
+        best_model = LGBMRegressor(**study.best_params, random_state=42, verbose=-1)
         best_model.fit(X_train, y_train)
-        joblib.dump(best_model, os.path.join(self.models_dir, "lightgbm_model.pkl"))
+        joblib.dump({
+          "model": best_model,
+          "feature_names": X_train.columns.tolist()  # <-- вот они
+          }, os.path.join(self.models_dir, "lightgbm_model"))
         return best_model
 
     def train_catboost(self, X_train, y_train, X_val, y_val):
@@ -89,7 +94,7 @@ class ModelTrainer:
         def objective(trial):
             param = {
                 'iterations': trial.suggest_int('iterations', 100, 5000),
-                'depth': trial.suggest_int('depth', 1, 20),
+                'depth': trial.suggest_int('depth', 1, 16),
                 'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
                 'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 20),
             }
@@ -103,5 +108,40 @@ class ModelTrainer:
         
         best_model = CatBoostRegressor(**study.best_params, random_seed=42, verbose=False)
         best_model.fit(X_train, y_train)
-        best_model.save_model(os.path.join(self.models_dir, "catboost_model.cbm"))
+        # Заменили нативный save_model на joblib для единообразия
+        joblib.dump({
+          "model": best_model,
+          "feature_names": X_train.columns.tolist()  # <-- вот они
+          }, os.path.join(self.models_dir, "catboost_model"))
         return best_model
+
+
+def load_boosting_model(filepath):
+    """
+    Загружает модель, сохранённую через joblib.
+    Возвращает готовый sklearn-совместимый объект.
+    """
+    if not os.path.exists(filepath):
+        raise FileNotFoundError(f"Файл модели не найден: {filepath}")
+    bundle = joblib.load(filepath)
+    return bundle["model"], bundle["feature_names"]
+
+
+def predict_from_dict(model, data_dict, feature_names):
+    """
+    Принимает joblib-модель, словарь с признаками и эталонный список имён признаков.
+    Возвращает предсказание (float).
+    """
+    # 1. Проверка полноты данных
+    missing = [f for f in feature_names if f not in data_dict]
+    if missing:
+        raise KeyError(f"В переданных данных отсутствуют признаки: {missing}")
+
+    # 2. Формируем DataFrame в строгом порядке колонок (как при обучении)
+    df_input = pd.DataFrame([data_dict])[feature_names]
+
+    # 3. Предсказание
+    pred = model.predict(df_input)
+
+    # 4. Возвращаем скалярное значение
+    return float(pred[0]) if hasattr(pred, '__len__') else float(pred)

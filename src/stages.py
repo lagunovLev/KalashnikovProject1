@@ -5,6 +5,12 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
 from sklearn.preprocessing import LabelEncoder
+from src.models_utils import load_boosting_model
+import pandas as pd
+import numpy as np
+import joblib
+from typing import Dict, List, Any
+from pathlib import Path
 
 def combine_data(consumption_path, production_path, output_path, config):
     """Этап 1: Объединение данных."""
@@ -172,6 +178,151 @@ def plot_feature_importance(models_dir, reports_dir, config):
         plt.savefig(os.path.join(reports_dir, "feature_importance_xgb.png"))
         plt.close()
 
-def complete_task(models_dir, task_path, output_path, config):
+
+
+def predict_from_dict(model, data_dict, feature_names, model_type='sklearn_like'):
+    """
+    Принимает модель, словарь с признаками и список имён признаков.
+    Возвращает предсказание для одной строки данных.
+    """
+    # 1. Проверяем, что все нужные признаки присутствуют в словаре
+    missing = [f for f in feature_names if f not in data_dict]
+    if missing:
+        raise KeyError(f"В переданных данных отсутствуют признаки: {missing}")
+
+    # 2. Преобразуем словарь в DataFrame с СТРОГИМ порядком столбцов
+    # Это обязательно, иначе модель перепутает признаки и предсказание будет неверным
+    df_input = pd.DataFrame([data_dict])[feature_names]
+
+    # 3. Делаем предсказание в зависимости от типа модели
+    if model_type == 'xgboost':
+        pred = model.predict(df_input)
+    elif model_type == 'catboost':
+        pred = model.predict(df_input)
+    elif model_type == 'lightgbm':
+        pred = model.predict(df_input)
+    else:
+        # Для sklearn-совместимых моделей, сохранённых через joblib/pickle
+        pred = model.predict(df_input)
+
+    # Возвращаем скалярное значение (убираем обёртку numpy array)
+    return float(pred[0]) if hasattr(pred[0], 'item') else pred[0]
+
+
+def calculate_materials(
+    task_path: str,
+    model,
+    feature_names: List[str],
+    product_to_materials: Dict[int, List[int]],
+    product_col: str = 'артикул продукции',
+    workshop_col: str = 'цех',
+    material_col: str = 'артикул материала'
+):
+    """
+    Преобразует план производства продукции в план потребности материалов.
+    
+    Args:
+        task_path: Путь к входной таблице (продукция × цех × периоды)
+        output_path: Путь для сохранения результата (материалы × цех × периоды)
+        model: Обученная модель для предсказания количества
+        feature_names: Список признаков модели
+        product_to_materials: Словарь {артикул_продукции: [артикул_материала1, ...]}
+        product_col: Название колонки с продукцией во входном файле
+        workshop_col: Название колонки с цехом
+        material_col: Название колонки для материалов в выходном файле
+    """
+    # 1. Загрузка данных
+    df = pd.read_csv(task_path, encoding='utf-8')
+    
+    # 2. Определение колонок времени (всё кроме продукции и цеха)
+    time_cols = [c for c in df.columns if c not in [product_col, workshop_col]]
+    
+    if not time_cols:
+        raise ValueError("Не найдены колонки с периодами времени")
+    
+    # 3. Сбор всех результатов предсказаний
+    results = []
+    
+    for idx, row in df.iterrows():
+        product = row[product_col]
+        workshop = row[workshop_col]
+        
+        # Проверка наличия продукта в словаре материалов
+        if product not in product_to_materials:
+            print(f"⚠️ Продукт {product} не найден в словаре материалов, пропускаем")
+            continue
+        
+        materials = product_to_materials[product]
+        
+        # Предсказание для каждого материала
+        for material in materials:
+            # Формируем входной словарь для модели
+            data_dict = {
+                product_col: product,
+                workshop_col: workshop,
+                **{col: row[col] for col in time_cols}
+            }
+            
+            # Добавляем материал как признак (если он есть в feature_names)
+            if material_col in feature_names:
+                data_dict[material_col] = material
+            
+            try:
+                quantity = predict_from_dict(model, data_dict, feature_names)
+                
+                results.append({
+                    material_col: material,
+                    workshop_col: workshop,
+                    **{col: quantity for col in time_cols}
+                })
+            except Exception as e:
+                print(f"⚠️ Ошибка предсказания для {product}/{material}/{workshop}: {e}")
+                continue
+    
+    # 4. Создание выходной таблицы
+    if not results:
+        raise ValueError("Не удалось сделать ни одного предсказания")
+    
+    df_output = pd.DataFrame(results)
+    
+    # 5. Агрегация (если один материал встречается несколько раз)
+    agg_dict = {col: 'sum' for col in time_cols}
+    agg_dict[workshop_col] = 'first'
+    df_output = df_output.groupby(material_col, as_index=False).agg(agg_dict)
+    
+    print(f"✅ Готово! Сохранено {len(df_output)} строк в {output_path}")
+    return df_output
+
+
+def complete_task(models_dir, train_path, task_path, output_path, config):
     """Этап 9: Выполнение задачи"""
+    import csv
+    from collections import defaultdict
+    
+
+    def csv_to_dict(filepath, col_a='Артикул продукции', col_b='Артикул материала'):
+        """
+        Читает CSV и возвращает словарь: 
+        ключ = значения колонки A, значение = список соответствующих значений B.
+        """
+        grouped = defaultdict(list)
+
+        with open(filepath, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                key = int(row.get(col_a, '').strip())
+                value = int(row.get(col_b, '').strip())
+
+                if key:  # Пропускаем строки, где колонка A пустая
+                    grouped[key].append(value)
+
+        return dict(grouped)
+    
+    material_articles = csv_to_dict(train_path)
+    model, feature_names = load_boosting_model(f"{models_dir}/{config["task"]["model"]}_model")
+
+    output = calculate_materials(task_path, model, feature_names, material_articles, "Артикул продукции", "Цех", "Артикул материала")
+    output.to_csv(output_path, index=False, encoding='utf-8')
+
+    
 
