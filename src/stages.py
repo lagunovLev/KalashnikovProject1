@@ -214,9 +214,9 @@ def calculate_materials(
     model,
     feature_names: List[str],
     product_to_materials: Dict[int, List[int]],
-    product_col: str = 'артикул продукции',
-    workshop_col: str = 'цех',
-    material_col: str = 'артикул материала'
+    product_col: str = 'Артикул продукции',
+    workshop_col: str = 'Цех',
+    material_col: str = 'Артикул материала'
 ):
     """
     Преобразует план производства продукции в план потребности материалов.
