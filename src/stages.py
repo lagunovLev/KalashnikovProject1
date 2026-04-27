@@ -232,7 +232,7 @@ def calculate_materials(
         material_col: Название колонки для материалов в выходном файле
     """
     # 1. Загрузка данных
-    df = pd.read_csv(task_path, encoding='utf-8')
+    df = pd.read_csv(task_path, encoding="1125")
     
     # 2. Определение колонок времени (всё кроме продукции и цеха)
     time_cols = [c for c in df.columns if c not in [product_col, workshop_col]]
