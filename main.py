@@ -7,7 +7,7 @@ from src.stages import (
     combine_data, clean_data, filter_outliers, 
     feature_engineering, visualize_data, 
     evaluate_models, plot_feature_importance,
-    complete_task
+    complete_task, compare_results
 )
 from src.models_utils import ModelTrainer, get_data_splits
 import io
@@ -84,6 +84,9 @@ def run_pipeline(args):
 
     if args.stage <= 9:
         complete_task(paths['models_dir'], paths['features_data'], paths['task'], paths['task_output'], config)
+
+    if args.stage <= 10:
+        compare_results(paths['task'], paths['task_output'], paths['reports_dir'], config)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalashnikov ML Pipeline")

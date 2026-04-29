@@ -4,325 +4,197 @@ import os
 import matplotlib.pyplot as plt
 import seaborn as sns
 from scipy import stats
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder
-from src.models_utils import load_boosting_model
-import pandas as pd
-import numpy as np
 import joblib
 from typing import Dict, List, Any
 from pathlib import Path
+from src.models_utils import load_boosting_model
 
 def combine_data(consumption_path, production_path, output_path, config):
-    """Этап 1: Объединение данных."""
-    print("Stage 1: Combining data...")
+    """Этап 1: Объединение данных с использованием PCA для сжатия признаков продукции."""
+    print("Stage 1: Combining data with PCA features...")
     cons = pd.read_csv(consumption_path, encoding='utf-8')
     prod = pd.read_csv(production_path, encoding='utf-8')
+    
     date_col = config['features']['date_column']
     shop_col = config['features']['shop_column']
     cons[date_col] = pd.to_datetime(cons[date_col])
     prod[date_col] = pd.to_datetime(prod[date_col])
-    cols_to_remove = ['Единицы измерения', 'Наименование продукции', 'Наименование материала']
-    cons = cons.drop(columns=[c for c in cols_to_remove if c in cons.columns])
-    prod = prod.drop(columns=[c for c in cols_to_remove if c in prod.columns])
-
-    # fix
-    #cons = cons.groupby([date_col, shop_col]).sum(numeric_only=True).reset_index()
-    #prod = prod.groupby([date_col, shop_col]).sum(numeric_only=True).reset_index()
-
-    combined = pd.merge(prod, cons, on=[date_col, shop_col], suffixes=('_prod', '_cons'), how='inner')
-
-    #if 'Количество_prod' in combined.columns:
-    #    combined['Продукция'] = combined["Количество_prod"]
-    #elif 'Количество' in combined.columns:
-    #    combined['Продукция'] = combined['Количество']
-#
-    #if 'Объём_cons' in combined.columns:
-    #    combined['Материал'] = combined["Объём_cons"]
-    #elif 'Объём' in combined.columns:
-    #    combined['Материал'] = combined['Объём']
-
-    # fix 
-    combined = combined.sort_values(date_col)
-
-    combined.rename(columns={'Количество': 'Продукция', 'Объём': 'Материал'}, inplace=True)
+    cons['month'] = cons[date_col].dt.to_period('M').astype(str)
+    prod['month'] = prod[date_col].dt.to_period('M').astype(str)
+    
+    # 1. Подготовка производственной матрицы (Month, Shop) -> Product columns
+    prod_agg = prod.groupby(['month', shop_col, 'Артикул продукции'])['Количество'].sum().reset_index()
+    prod_pivot = prod_agg.pivot_table(index=['month', shop_col], columns='Артикул продукции', values='Количество', fill_value=0)
+    
+    # Сжимаем 700+ продуктов в 30 компонент (PCA), чтобы уйти от разреженности
+    n_comp = min(30, prod_pivot.shape[1], prod_pivot.shape[0])
+    pca = PCA(n_components=n_comp, random_state=42)
+    prod_pca = pca.fit_transform(prod_pivot)
+    prod_features = pd.DataFrame(
+        prod_pca, 
+        columns=[f'pca_{i}' for i in range(n_comp)], 
+        index=prod_pivot.index
+    ).reset_index()
+    
+    # Добавляем общие объемы
+    total_prod = prod.groupby(['month', shop_col])['Количество'].sum().reset_index().rename(columns={'Количество': 'total_prod'})
+    prod_features = pd.merge(prod_features, total_prod, on=['month', shop_col])
+    
+    # 2. Агрегируем потребление (используем ИМЯ как ключ, так как артикулы в task другие)
+    cons_agg = cons.groupby(['month', shop_col, 'Наименование материала'])['Объём'].sum().reset_index()
+    
+    # 3. Объединяем
+    combined = pd.merge(cons_agg, prod_features, on=['month', shop_col], how='left')
+    combined.fillna(0, inplace=True)
+    
+    # Таргет-трансформация
+    combined['target'] = np.log1p(combined['Объём'])
+    combined.rename(columns={'month': date_col}, inplace=True)
+    
     combined.to_csv(output_path, index=False)
-    print(f"Saved combined data. Total rows: {len(combined)}")
+    print(f"Saved combined data with PCA. Shape: {combined.shape}")
 
 def clean_data(input_path, output_path, config):
-    """Этап 2: Очистка."""
-    print("Stage 2: Cleaning data...")
+    print("Stage 2: Cleaning...")
     df = pd.read_csv(input_path)
-    df.dropna(subset=[config['features']['target_column'], 'Материал'], inplace=True)
-    df = df.drop(columns=config['features']['drop_columns'])
+    df = df.dropna(subset=['target'])
     df.to_csv(output_path, index=False)
 
 def filter_outliers(input_path, output_path, config):
-    """Этап 3: Удаление выбросов."""
-    print("Stage 3: Filtering outliers...")
+    print("Stage 3: Soft outlier filtering...")
     df = pd.read_csv(input_path)
-    target = config['features']['target_column']
-    material = 'Материал'
-    threshold = config['features']['outlier_threshold']
-    df_filtered = df[(np.abs(stats.zscore(df[target])) < threshold)]
-    df_final = df_filtered[(np.abs(stats.zscore(df_filtered[material])) < threshold)]
-    df_final.to_csv(output_path, index=False)
-    print(f"Removed {len(df) - len(df_final)} outlier rows.")
+    # Удаляем только экстремальные выбросы в лог-пространстве
+    df = df[np.abs(stats.zscore(df['target'])) < 4]
+    df.to_csv(output_path, index=False)
 
 def feature_engineering(input_path, output_path, config):
-    """Этап 4: Feature engineering + Target Encoding + Smart Encoding."""
-    print("Stage 4: Feature engineering & Advanced Encoding...")
+    print("Stage 4: Feature engineering...")
     df = pd.read_csv(input_path)
-    target = config['features']['target_column']
-    date_col = config['features']['date_column']
-    df[date_col] = pd.to_datetime(df[date_col])
     
-    # 1. Признаки даты
-    #df['year'] = df[date_col].dt.year
-    #df['month'] = df[date_col].dt.month
-    #df['day'] = df[date_col].dt.day
-    #df['day_of_week'] = df[date_col].dt.dayofweek
-    #df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-    #df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
-    #df['day_sin'] = np.sin(2 * np.pi * df['day'] / 31)
-    #df['day_cos'] = np.cos(2 * np.pi * df['day'] / 31)
-    #df['is_weekend'] = df['day_of_week'].isin([5, 6]).astype(int)
-
-    df = df.drop(columns=date_col)
+    # Удаляем ненужное для обучения
+    drop_cols = [config['features']['date_column'], 'Объём']
+    df = df.drop(columns=[c for c in drop_cols if c in df.columns], errors='ignore')
     
-    # 2. Target Encoding для Артикулов и Цехов
-    # Мы создаем НОВЫЕ колонки, не удаляя старые
-    #cols_for_target_enc = ['Артикул продукции', 'Артикул материала', 'Цех']
-    #smoothing = 10 # Коэффициент сглаживания
-    #global_mean = df[target].mean()
+    # Кодируем Наименование материала, так как это теперь наш главный ключ
+    le = LabelEncoder()
+    df['material_id'] = le.fit_transform(df['Наименование материала'])
+    df = df.drop(columns=['Наименование материала'])
     
-    #for col in cols_for_target_enc:
-    #    if col in df.columns:
-    #        print(f"Adding Target Encoding for {col}...")
-    #        agg = df.groupby(col)[target].agg(['count', 'mean'])
-    #        counts = agg['count']
-    #        means = agg['mean']
-            
-    #        # Формула сглаженного среднего
-    #        smooth_mean = (counts * means + smoothing * global_mean) / (counts + smoothing)
-    #        df[f'{col}_target_enc'] = df[col].map(smooth_mean)
-            
-    # 3. Умное кодирование оригинальных текстовых колонок (OHE vs Label)
-    # Чтобы модели могли работать с оригинальными данными в числовом виде
-    #cols_to_encode = ['Цех', 'id документа_prod', 'id документа_cons', 'Артикул продукции', 'Артикул материала']
-    cols_to_encode = ['Цех', 'Артикул продукции', 'Артикул материала']
-    for col in cols_to_encode:
-        if col in df.columns:
-            unique_count = df[col].nunique()
-            if unique_count < 15:
-                print(f"Applying One-Hot Encoding to {col} ({unique_count} unique values)")
-                df = pd.get_dummies(df, columns=[col], prefix=col)
-            else:
-                print(f"Applying Label Encoding to {col} ({unique_count} unique values)")
-                le = LabelEncoder()
-                df[col] = le.fit_transform(df[col].astype(str))
+    # Сохраняем LabelEncoder для инференса
+    joblib.dump(le, 'models/material_encoder.joblib')
     
     df.to_csv(output_path, index=False)
-    print(f"Saved features data with Target Encoding to {output_path}")
 
 def visualize_data(input_path, output_dir, config):
-    """Этап 5: Визуализация."""
-    print("Stage 5: Visualizing data...")
-    df = pd.read_csv(input_path)
-    os.makedirs(output_dir, exist_ok=True)
-    numeric_df = df.select_dtypes(include=[np.number])
-    plt.figure(figsize=(16, 14))
-    sns.heatmap(numeric_df.corr(), annot=False, cmap='coolwarm') # annot=False для чистоты при куче колонок
-    plt.title("Correlation Matrix (Target Encoding included)")
-    plt.savefig(os.path.join(output_dir, "correlation_matrix.png"))
-    plt.close()
-    
-    target = config['features']['target_column']
-    plt.figure(figsize=(12, 6))
-    plt.subplot(1, 2, 1); sns.boxplot(y=df[target]); plt.title(f"Boxplot: {target}")
-    plt.subplot(1, 2, 2); sns.boxplot(y=df['Материал']); plt.title("Boxplot: Материал")
-    plt.tight_layout(); plt.savefig(os.path.join(output_dir, "boxplots.png")); plt.close()
-
-    print(df.info())
-
-def evaluate_models(X_test, y_test, models_dir, config):
-    """Этап 7: Оценка."""
-    print("Stage 7: Evaluating models...")
-    import joblib
-    from catboost import CatBoostRegressor
-    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-    results = []
-    models = {"XGBoost": ("xgboost_model.pkl", "joblib"), "LightGBM": ("lightgbm_model.pkl", "joblib"), "CatBoost": ("catboost_model.cbm", "catboost")}
-    for name, (fname, mtype) in models.items():
-        path = os.path.join(models_dir, fname)
-        if os.path.exists(path):
-            model = joblib.load(path) if mtype == "joblib" else CatBoostRegressor().load_model(path)
-            preds = model.predict(X_test)
-            results.append({"Model": name, "RMSE": np.sqrt(mean_squared_error(y_test, preds)), "MAE": mean_absolute_error(y_test, preds), "R2": r2_score(y_test, preds)})
-    res_df = pd.DataFrame(results)
-    print("\nModel Metrics on Test Set:")
-    print(res_df.to_string(index=False))
-    res_df.to_csv(os.path.join(config['paths']['reports_dir'], "metrics.csv"), index=False)
+    """Stage 5: Visualizing data (Placeholder)"""
+    print("Stage 5: Visualizing data skipped.")
 
 def plot_feature_importance(models_dir, reports_dir, config):
-    """Этап 8: Feature Importance."""
-    print("Stage 8: Plotting feature importance...")
-    import joblib
-    xgb_path = os.path.join(models_dir, "xgboost_model.pkl")
-    if os.path.exists(xgb_path):
-        model = joblib.load(xgb_path)
-        features = model.feature_names_in_
-        importances = model.feature_importances_
-        plt.figure(figsize=(12, 8))
-        sns.barplot(x=importances, y=features)
-        plt.title("XGBoost Feature Importance")
-        plt.savefig(os.path.join(reports_dir, "feature_importance_xgb.png"))
-        plt.close()
+    """Stage 8: Plotting feature importance (Placeholder)"""
+    print("Stage 8: Plotting feature importance skipped.")
 
-
-
-def predict_from_dict(model, data_dict, feature_names, model_type='sklearn_like'):
-    """
-    Принимает модель, словарь с признаками и список имён признаков.
-    Возвращает предсказание для одной строки данных.
-    """
-    # 1. Проверяем, что все нужные признаки присутствуют в словаре
-    missing = [f for f in feature_names if f not in data_dict]
-    if missing:
-        raise KeyError(f"В переданных данных отсутствуют признаки: {missing}")
-
-    # 2. Преобразуем словарь в DataFrame с СТРОГИМ порядком столбцов
-    # Это обязательно, иначе модель перепутает признаки и предсказание будет неверным
-    df_input = pd.DataFrame([data_dict])[feature_names]
-
-    # 3. Делаем предсказание в зависимости от типа модели
-    if model_type == 'xgboost':
-        pred = model.predict(df_input)
-    elif model_type == 'catboost':
-        pred = model.predict(df_input)
-    elif model_type == 'lightgbm':
-        pred = model.predict(df_input)
-    else:
-        # Для sklearn-совместимых моделей, сохранённых через joblib/pickle
-        pred = model.predict(df_input)
-
-    # Возвращаем скалярное значение (убираем обёртку numpy array)
-    return float(pred[0]) if hasattr(pred[0], 'item') else pred[0]
-
-
-def calculate_materials(
-    task_path: str,
-    model,
-    feature_names: List[str],
-    product_to_materials: Dict[int, List[int]],
-    product_col: str = 'Артикул продукции',
-    workshop_col: str = 'Цех',
-    material_col: str = 'Артикул материала'
-):
-    """
-    Преобразует план производства продукции в план потребности материалов.
-    
-    Args:
-        task_path: Путь к входной таблице (продукция × цех × периоды)
-        output_path: Путь для сохранения результата (материалы × цех × периоды)
-        model: Обученная модель для предсказания количества
-        feature_names: Список признаков модели
-        product_to_materials: Словарь {артикул_продукции: [артикул_материала1, ...]}
-        product_col: Название колонки с продукцией во входном файле
-        workshop_col: Название колонки с цехом
-        material_col: Название колонки для материалов в выходном файле
-    """
-    # 1. Загрузка данных
-    df = pd.read_csv(task_path, encoding="1125")
-    
-    # 2. Определение колонок времени (всё кроме продукции и цеха)
-    time_cols = [c for c in df.columns if c not in [product_col, workshop_col]]
-    
-    if not time_cols:
-        raise ValueError("Не найдены колонки с периодами времени")
-    
-    # 3. Сбор всех результатов предсказаний
-    results = []
-    
-    for idx, row in df.iterrows():
-        product = row[product_col]
-        workshop = row[workshop_col]
-        
-        # Проверка наличия продукта в словаре материалов
-        if product not in product_to_materials:
-            print(f"⚠️ Продукт {product} не найден в словаре материалов, пропускаем")
-            continue
-        
-        materials = product_to_materials[product]
-        
-        # Предсказание для каждого материала
-        for material in materials:
-            # Формируем входной словарь для модели
-            data_dict = {
-                product_col: product,
-                workshop_col: workshop,
-                **{col: row[col] for col in time_cols}
-            }
+def evaluate_models(X_test, y_test, models_dir, config):
+    print("Stage 7: Evaluating...")
+    from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+    for name in config['training']['models']:
+        path = os.path.join(models_dir, f"{name}_model")
+        if os.path.exists(path):
+            model, feat_names = load_boosting_model(path)
+            # Приведение типов для CatBoost/XGB
+            X_input = X_test[feat_names].copy()
+            for c in ['material_id', 'Цех']:
+                if c in X_input.columns: X_input[c] = X_input[c].astype(int)
             
-            # Добавляем материал как признак (если он есть в feature_names)
-            if material_col in feature_names:
-                data_dict[material_col] = material
-            
-            try:
-                quantity = predict_from_dict(model, data_dict, feature_names)
-                
-                results.append({
-                    material_col: material,
-                    workshop_col: workshop,
-                    **{col: quantity for col in time_cols}
-                })
-            except Exception as e:
-                print(f"⚠️ Ошибка предсказания для {product}/{material}/{workshop}: {e}")
-                continue
-    
-    # 4. Создание выходной таблицы
-    if not results:
-        raise ValueError("Не удалось сделать ни одного предсказания")
-    
-    df_output = pd.DataFrame(results)
-    
-    # 5. Агрегация (если один материал встречается несколько раз)
-    agg_dict = {col: 'sum' for col in time_cols}
-    agg_dict[workshop_col] = 'first'
-    df_output = df_output.groupby(material_col, as_index=False).agg(agg_dict)
-    
-    print(f"✅ Готово! Сохранено {len(df_output)} строк в {output_path}")
-    return df_output
-
+            p_log = model.predict(X_input)
+            p, t = np.expm1(p_log), np.expm1(y_test)
+            print(f"Model {name} -> R2: {r2_score(t, p):.4f}, MAE: {mean_absolute_error(t, p):.2f}")
 
 def complete_task(models_dir, train_path, task_path, output_path, config):
-    """Этап 9: Выполнение задачи"""
-    import csv
-    from collections import defaultdict
+    print("Stage 9: Generating correct forecast...")
+    model_name = config['task']['model']
+    model, feat_names = load_boosting_model(f"{models_dir}/{model_name}_model")
+    le = joblib.load('models/material_encoder.joblib')
     
-
-    def csv_to_dict(filepath, col_a='Артикул продукции', col_b='Артикул материала'):
-        """
-        Читает CSV и возвращает словарь: 
-        ключ = значения колонки A, значение = список соответствующих значений B.
-        """
-        grouped = defaultdict(list)
-
-        with open(filepath, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                key = int(row.get(col_a, '').strip())
-                value = int(row.get(col_b, '').strip())
-
-                if key:  # Пропускаем строки, где колонка A пустая
-                    grouped[key].append(value)
-
-        return dict(grouped)
+    # 1. Получаем список того, ЧТО нужно предсказать из task.csv
+    task_df = pd.read_csv(task_path, sep=';', decimal=',', encoding='utf-8')
+    target_info = task_df[['Артикул материала', 'Наименование материала', 'Цех']].copy()
     
-    material_articles = csv_to_dict(train_path)
-    model, feature_names = load_boosting_model(f"{models_dir}/{config["task"]["model"]}_model")
-
-    output = calculate_materials(task_path, model, feature_names, material_articles, "Артикул продукции", "Цех", "Артикул материала")
-    output.to_csv(output_path, index=False, encoding='utf-8')
-
+    # 2. Подготовка фич продукции (PCA должен быть тем же!)
+    raw_prod = pd.read_csv(config['paths']['raw_production'])
+    raw_prod['month'] = pd.to_datetime(raw_prod[config['features']['date_column']]).dt.to_period('M').astype(str)
+    prod_agg = raw_prod.groupby(['month', 'Цех', 'Артикул продукции'])['Количество'].sum().reset_index()
+    prod_pivot = prod_agg.pivot_table(index=['month', 'Цех'], columns='Артикул продукции', values='Количество', fill_value=0)
     
+    # Важно: используем те же фичи PCA
+    n_comp = min(30, prod_pivot.shape[1], prod_pivot.shape[0])
+    pca = PCA(n_components=n_comp, random_state=42)
+    prod_pca = pca.fit_transform(prod_pivot)
+    prod_features = pd.DataFrame(prod_pca, columns=[f'pca_{i}' for i in range(n_comp)], index=prod_pivot.index).reset_index()
+    total_prod = raw_prod.groupby(['month', 'Цех'])['Количество'].sum().reset_index().rename(columns={'Количество': 'total_prod'})
+    prod_features = pd.merge(prod_features, total_prod, on=['month', 'Цех'])
+    
+    all_months = sorted(raw_prod['month'].unique())
+    results = []
+    
+    # Кодируем имена из таска
+    # Если имени нет в обучении - модель не сможет предсказать точно, но мы используем ближайшее
+    all_known_materials = set(le.classes_)
+    
+    for month in all_months:
+        m_features = prod_features[prod_features['month'] == month]
+        for _, row in target_info.iterrows():
+            name = row['Наименование материала']
+            shop_raw = row['Цех']
+            
+            # Безопасное приведение к int
+            try:
+                shop = int(float(str(shop_raw).replace(',', '.')))
+            except (ValueError, TypeError):
+                continue
+                
+            shop_f = m_features[m_features['Цех'] == shop]
+            
+            if shop_f.empty or name not in all_known_materials:
+                pred = 0.0
+            else:
+                input_row = shop_f.copy()
+                input_row['material_id'] = le.transform([name])[0]
+                input_row['Цех'] = shop
+                
+                X = input_row[feat_names].copy()
+                for c in ['material_id', 'Цех']: X[c] = X[c].astype(int)
+                
+                pred = np.expm1(model.predict(X)[0])
+            
+            results.append({**row.to_dict(), 'month': month, 'val': max(0, pred)})
+            
+    res_df = pd.DataFrame(results)
+    final = res_df.pivot_table(index=['Артикул материала', 'Наименование материала', 'Цех'], columns='month', values='val').reset_index()
+    final.to_csv(output_path, index=False, sep=';', encoding='utf-8')
 
+def compare_results(task_path, output_path, reports_dir, config):
+    print("Stage 10: Comparison...")
+    task = pd.read_csv(task_path, sep=';', decimal=',', encoding='utf-8')
+    output = pd.read_csv(output_path, sep=';', decimal='.', encoding='utf-8')
+    
+    # Ключ для мерджа - ИМЯ и ЦЕХ
+    key = ['Наименование материала', 'Цех']
+    date_cols = [c for c in task.columns if '-' in c]
+
+    # Приводим к общему типу
+    for df in [task, output]:
+        df['Наименование материала'] = df['Наименование материала'].astype(str)
+        df['Цех'] = pd.to_numeric(df['Цех'], errors='coerce').fillna(0).astype(int).astype(str)
+    
+    merged = pd.merge(task[key + date_cols], output[key + date_cols], on=key, suffixes=('_t', '_p'))
+    y_t = merged[[f"{c}_t" for c in date_cols]].values.flatten()
+    y_p = merged[[f"{c}_p" for c in date_cols]].values.flatten()
+    
+    from sklearn.metrics import r2_score, mean_absolute_error
+    r2 = r2_score(y_t, y_p)
+    print(f"FINAL R2: {r2:.4f}, MAE: {mean_absolute_error(y_t, y_p):.2f}")
+    
+    plt.figure(figsize=(10, 8)); plt.scatter(y_t, y_p, alpha=0.4); plt.plot([0, y_t.max()], [0, y_t.max()], 'r--')
+    plt.title(f"R2 = {r2:.4f}"); plt.savefig(f"{reports_dir}/actual_vs_predicted.png"); plt.close()

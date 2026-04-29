@@ -14,23 +14,22 @@ paths:
   state_file: "pipeline_state.json"
 
 features:
-  target_column: "Материал"
+  target_column: "target"
   date_column: "Дата"
   shop_column: "Цех"
   drop_columns: ["id документа_prod", "id документа_cons"]
-  outlier_threshold: 1000000000000000000000.5 # Z-score для фильтрации выбросов
+  outlier_threshold: 4.0
 
 training:
   test_size: 0.2
   val_size: 0.2
   random_state: 42
-  optuna_trials: 1
-  models: ["xgboost", "lightgbm", "catboost"]
+  optuna_trials: 10
+  models: ["catboost"]
 
-# Параметры чтения (автоматически определяются или задаются здесь)
 csv_params:
   encoding: "utf-8"
   sep: ","
 
 task:
-  model: "lightgbm"
+  model: "catboost"

@@ -1,9 +1,9 @@
 {
     "combine": {
-        "func_hash": "d5b2b4c9e7a0b61903484e62bfaaf2ba",
+        "func_hash": "5d2f6a58de96fe324863e96f8065b103",
         "input_hashes": {
-            "data/raw/consumption.csv": "abb34ea772d3f955ad61ff2e8b3668b5",
-            "data/raw/production.csv": "98854774eb846e5312b216da3250eb3c"
+            "data/raw/consumption.csv": "a6c7ab2f6e9a9f125e673ea8b4d9127a",
+            "data/raw/production.csv": "cac667746b21146b59845f151f54f8b6"
         },
         "config_params": {
             "encoding": "utf-8",
@@ -11,51 +11,51 @@
         }
     },
     "clean": {
-        "func_hash": "15564d449a1be9db9bf56373f147b9e3",
+        "func_hash": "a23c789fada909e04363f4f4f19ceacb",
         "input_hashes": {
-            "data/interim/combined.csv": "f7cebcf5279c232d1aa48c5bab77cadc"
+            "data/interim/combined.csv": "d454a1fc9f23a251f5285fd3c5fe88d6"
         },
         "config_params": {
-            "target_column": "\u041c\u0430\u0442\u0435\u0440\u0438\u0430\u043b",
+            "target_column": "target",
             "date_column": "\u0414\u0430\u0442\u0430",
             "shop_column": "\u0426\u0435\u0445",
             "drop_columns": [
                 "id \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430_prod",
                 "id \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430_cons"
             ],
-            "outlier_threshold": 1e+21
+            "outlier_threshold": 4.0
         }
     },
     "outliers": {
-        "func_hash": "42cfc8818b371d49896b25e77950dbe8",
+        "func_hash": "e08cb1b36c803a24ca97486053a72dc6",
         "input_hashes": {
-            "data/processed/clear.csv": "a15fc3d87aa1c223db99c0fe2ebcde37"
+            "data/processed/clear.csv": "af4bc26d6b771a2f023dc27a791a6a2a"
         },
         "config_params": {
-            "target_column": "\u041c\u0430\u0442\u0435\u0440\u0438\u0430\u043b",
+            "target_column": "target",
             "date_column": "\u0414\u0430\u0442\u0430",
             "shop_column": "\u0426\u0435\u0445",
             "drop_columns": [
                 "id \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430_prod",
                 "id \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430_cons"
             ],
-            "outlier_threshold": 1e+21
+            "outlier_threshold": 4.0
         }
     },
     "features": {
-        "func_hash": "8b9bb9adf19e2e60b8438d32393a6fa2",
+        "func_hash": "9c51b31badbb366d5d342b73e2e539fb",
         "input_hashes": {
-            "data/processed/filtered.csv": "a15fc3d87aa1c223db99c0fe2ebcde37"
+            "data/processed/filtered.csv": "b55afcd0dfd079ac4bdaa94f0ba6b4e8"
         },
         "config_params": {
-            "target_column": "\u041c\u0430\u0442\u0435\u0440\u0438\u0430\u043b",
+            "target_column": "target",
             "date_column": "\u0414\u0430\u0442\u0430",
             "shop_column": "\u0426\u0435\u0445",
             "drop_columns": [
                 "id \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430_prod",
                 "id \u0434\u043e\u043a\u0443\u043c\u0435\u043d\u0442\u0430_cons"
             ],
-            "outlier_threshold": 1e+21
+            "outlier_threshold": 4.0
         }
     }
 }
