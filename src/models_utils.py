@@ -40,67 +40,69 @@ class ModelTrainer:
 
     def train_xgboost(self, X_train, y_train, X_val, y_val):
         print("Optimizing XGBoost...")
+        weights = X_train['sample_weight'] if 'sample_weight' in X_train.columns else None
+        X_t = X_train.drop(columns=['sample_weight'], errors='ignore')
+        X_v = X_val.drop(columns=['sample_weight'], errors='ignore')
         
         # Ensure categorical columns are type 'category'
-        X_train_cat = X_train.copy()
-        X_val_cat = X_val.copy()
-        for col in ['Артикул материала', 'Цех']:
-            if col in X_train_cat.columns:
-                X_train_cat[col] = X_train_cat[col].astype('category')
-                X_val_cat[col] = X_val_cat[col].astype('category')
+        for col in ['material_id', 'Цех']:
+            if col in X_t.columns: X_t[col] = X_t[col].astype('category')
+            if col in X_v.columns: X_v[col] = X_v[col].astype('category')
 
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 2000),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
                 'max_depth': trial.suggest_int('max_depth', 3, 10),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
             }
             model = XGBRegressor(**param, random_state=42, enable_categorical=True)
-            model.fit(X_train_cat, y_train, eval_set=[(X_val_cat, y_val)], verbose=False)
-            preds = model.predict(X_val_cat)
+            model.fit(X_t, y_train, sample_weight=weights, eval_set=[(X_v, y_val)], verbose=False)
+            preds = model.predict(X_v)
             return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
         best_model = XGBRegressor(**study.best_params, random_state=42, enable_categorical=True)
-        best_model.fit(X_train_cat, y_train)
-        joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, os.path.join(self.models_dir, "xgboost_model"))
+        best_model.fit(X_t, y_train, sample_weight=weights)
+        joblib.dump({"model": best_model, "feature_names": X_t.columns.tolist()}, os.path.join(self.models_dir, "xgboost_model"))
         return best_model
 
     def train_lightgbm(self, X_train, y_train, X_val, y_val):
         print("Optimizing LightGBM...")
-        cat_features = [col for col in ['Артикул материала', 'Цех'] if col in X_train.columns]
-        
-        # LightGBM prefers 'category' dtype for categorical_feature
-        X_train_cat = X_train.copy()
-        X_val_cat = X_val.copy()
+        weights = X_train['sample_weight'] if 'sample_weight' in X_train.columns else None
+        X_t = X_train.drop(columns=['sample_weight'], errors='ignore')
+        X_v = X_val.drop(columns=['sample_weight'], errors='ignore')
+        cat_features = [col for col in ['material_id', 'Цех'] if col in X_t.columns]
         for col in cat_features:
-            X_train_cat[col] = X_train_cat[col].astype('category')
-            X_val_cat[col] = X_val_cat[col].astype('category')
+            X_t[col] = X_t[col].astype('category')
+            X_v[col] = X_v[col].astype('category')
 
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 2000),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
                 'num_leaves': trial.suggest_int('num_leaves', 20, 100),
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
             }
             model = LGBMRegressor(**param, random_state=42, verbose=-1)
-            model.fit(X_train_cat, y_train, eval_set=[(X_val_cat, y_val)])
-            preds = model.predict(X_val_cat)
+            model.fit(X_t, y_train, sample_weight=weights, eval_set=[(X_v, y_val)])
+            preds = model.predict(X_v)
             return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
         best_model = LGBMRegressor(**study.best_params, random_state=42, verbose=-1)
-        best_model.fit(X_train_cat, y_train)
-        joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, os.path.join(self.models_dir, "lightgbm_model"))
+        best_model.fit(X_t, y_train, sample_weight=weights)
+        joblib.dump({"model": best_model, "feature_names": X_t.columns.tolist()}, os.path.join(self.models_dir, "lightgbm_model"))
         return best_model
 
     def train_catboost(self, X_train, y_train, X_val, y_val):
         print("Optimizing CatBoost...")
-        cat_features = [col for col in ['Артикул материала', 'Цех'] if col in X_train.columns]
+        weights = X_train['sample_weight'] if 'sample_weight' in X_train.columns else None
+        X_t = X_train.drop(columns=['sample_weight'], errors='ignore')
+        X_v = X_val.drop(columns=['sample_weight'], errors='ignore')
+        cat_features = [col for col in ['material_id', 'Цех'] if col in X_t.columns]
         
         def objective(trial):
             param = {
@@ -109,16 +111,16 @@ class ModelTrainer:
                 'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
             }
             model = CatBoostRegressor(**param, random_seed=42, verbose=False, cat_features=cat_features)
-            model.fit(X_train, y_train, eval_set=(X_val, y_val))
-            preds = model.predict(X_val)
+            model.fit(X_t, y_train, sample_weight=weights, eval_set=(X_v, y_val))
+            preds = model.predict(X_v)
             return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
         best_model = CatBoostRegressor(**study.best_params, random_seed=42, verbose=False, cat_features=cat_features)
-        best_model.fit(X_train, y_train)
-        joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, os.path.join(self.models_dir, "catboost_model"))
+        best_model.fit(X_t, y_train, sample_weight=weights)
+        joblib.dump({"model": best_model, "feature_names": X_t.columns.tolist()}, os.path.join(self.models_dir, "catboost_model"))
         return best_model
 
 
