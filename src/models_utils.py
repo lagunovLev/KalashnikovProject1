@@ -43,28 +43,29 @@ class ModelTrainer:
         plt.figure(figsize=(10, 6))
         try:
             if model_name == "xgboost":
-                # XGBoost keys: validation_0, validation_1 ... metrics: rmse, mae ...
-                train_key = 'validation_0'
-                val_key = 'validation_1'
+                train_key, val_key = 'validation_0', 'validation_1'
                 metric = 'rmse' if 'rmse' in eval_results[train_key] else list(eval_results[train_key].keys())[0]
-                train_rmse = eval_results[train_key][metric]
-                val_rmse = eval_results[val_key][metric]
+                train_vals = eval_results[train_key][metric]
+                val_vals = eval_results[val_key][metric]
             elif model_name == "lightgbm":
-                # LightGBM keys: training, valid_1 ... metrics: rmse, l2 ...
                 train_key = 'training' if 'training' in eval_results else 'valid_0'
                 val_key = 'valid_1'
                 metric = 'rmse' if 'rmse' in eval_results[train_key] else 'l2' if 'l2' in eval_results[train_key] else list(eval_results[train_key].keys())[0]
-                train_rmse = eval_results[train_key][metric]
-                val_rmse = eval_results[val_key][metric]
+                train_vals = eval_results[train_key][metric]
+                val_vals = eval_results[val_key][metric]
+                # Если метрика L2 (MSE), извлекаем корень для приведения к RMSE
+                if metric == 'l2':
+                    train_vals = [np.sqrt(x) for x in train_vals]
+                    val_vals = [np.sqrt(x) for x in val_vals]
             elif model_name == "catboost":
-                train_rmse = eval_results['learn']['RMSE']
-                val_rmse = eval_results['validation']['RMSE']
+                train_vals = eval_results['learn']['RMSE']
+                val_vals = eval_results['validation']['RMSE']
             
-            plt.plot(train_rmse, label='Train')
-            plt.plot(val_rmse, label='Validation')
+            plt.plot(train_vals, label='Train')
+            plt.plot(val_vals, label='Validation')
             plt.title(f'Learning Curve: {model_name}')
             plt.xlabel('Iterations')
-            plt.ylabel('Score')
+            plt.ylabel('RMSE') # Меняем Score на RMSE
             plt.legend()
             plt.savefig(os.path.join(self.reports_dir, f"learning_curve_{model_name}.png"))
         except Exception as e:
