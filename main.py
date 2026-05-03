@@ -7,7 +7,7 @@ from src.stages import (
     combine_data, clean_data, filter_outliers, 
     feature_engineering, visualize_data, 
     evaluate_models, plot_feature_importance,
-    complete_task, compare_results
+    complete_task
 )
 from src.models_utils import ModelTrainer, get_data_splits
 import io
@@ -58,16 +58,32 @@ def run_pipeline(args):
         visualize_data(paths['features_data'], paths['reports_dir'], config)
 
     # --- Stage 6: Training ---
-    # if args.stage <= 6: ...
+    if args.stage <= 6:
+        print("Stage 6: Training models...")
+        df = pd.read_csv(paths['features_data'])
+        X_train, X_val, X_test, y_train, y_val, y_test = get_data_splits(df, config)
+        
+        trainer = ModelTrainer(config)
+        
+        if args.model in ["all", "xgboost"]:
+            trainer.train_xgboost(X_train, y_train, X_val, y_val)
+        if args.model in ["all", "lightgbm"]:
+            trainer.train_lightgbm(X_train, y_train, X_val, y_val)
+        if args.model in ["all", "catboost"]:
+            trainer.train_catboost(X_train, y_train, X_val, y_val)
 
     # --- Stage 7: Evaluation ---
-    # if args.stage <= 7: ...
+    if args.stage <= 7:
+        df = pd.read_csv(paths['features_data'])
+        _, _, X_test, _, _, y_test = get_data_splits(df, config)
+        evaluate_models(X_test, y_test, paths['models_dir'], config)
+
+    # --- Stage 8: Plots ---
+    #if args.stage <= 8:
+    #    plot_feature_importance(paths['models_dir'], paths['reports_dir'], config)
 
     if args.stage <= 9:
         complete_task(paths['models_dir'], paths['features_data'], paths['task'], paths['task_output'], config)
-
-    if args.stage <= 10:
-        compare_results(paths['task'], paths['task_output'], paths['reports_dir'], config)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalashnikov ML Pipeline")
