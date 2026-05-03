@@ -31,74 +31,112 @@ def get_data_splits(df, config):
     return X_train, X_val, X_test, y_train, y_val, y_test
 
 
+import matplotlib.pyplot as plt
+
 class ModelTrainer:
     def __init__(self, config):
         self.config = config
         self.trials = config['training']['optuna_trials']
         self.models_dir = config['paths']['models_dir']
+        self.reports_dir = config['paths']['reports_dir']
         os.makedirs(self.models_dir, exist_ok=True)
+        os.makedirs(self.reports_dir, exist_ok=True)
+
+    def _plot_learning_curve(self, eval_results, model_name):
+        plt.figure(figsize=(10, 6))
+        if model_name == "xgboost":
+            train_rmse = eval_results['validation_0']['rmse']
+            val_rmse = eval_results['validation_1']['rmse']
+        elif model_name == "lightgbm":
+            train_rmse = eval_results['training']['rmse']
+            val_rmse = eval_results['valid_1']['rmse']
+        elif model_name == "catboost":
+            train_rmse = eval_results['learn']['RMSE']
+            val_rmse = eval_results['validation']['RMSE']
+        
+        plt.plot(train_rmse, label='Train')
+        plt.plot(val_rmse, label='Validation')
+        plt.title(f'Learning Curve: {model_name}')
+        plt.xlabel('Iterations')
+        plt.ylabel('RMSE')
+        plt.legend()
+        plt.savefig(os.path.join(self.reports_dir, f"learning_curve_{model_name}.png"))
+        plt.close()
 
     def train_xgboost(self, X_train, y_train, X_val, y_val):
         print("Optimizing XGBoost...")
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 5000),
-                'max_depth': trial.suggest_int('max_depth', 1, 20),
-                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
-                'subsample': trial.suggest_float('subsample', 0.2, 1.0),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.2, 1.0),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
+                'max_depth': trial.suggest_int('max_depth', 3, 10),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                'eval_metric': 'rmse'
             }
             model = XGBRegressor(**param, random_state=42)
-            model.fit(X_train, y_train, eval_set=[(X_val, y_val)], verbose=False)
+            model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
             preds = model.predict(X_val)
             return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
-        best_model = XGBRegressor(**study.best_params, random_state=42)
-        best_model.fit(X_train, y_train)
-        joblib.dump({
-          "model": best_model,
-          "feature_names": X_train.columns.tolist()  # <-- вот они
-          }, os.path.join(self.models_dir, "xgboost_model"))
+        best_params = study.best_params
+        best_params['eval_metric'] = 'rmse'
+        best_model = XGBRegressor(**best_params, random_state=42)
+        best_model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
+        
+        evals_result = best_model.evals_result()
+        self._plot_learning_curve(evals_result, "xgboost")
+        
+        joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, 
+                    os.path.join(self.models_dir, "xgboost_model"))
         return best_model
 
     def train_lightgbm(self, X_train, y_train, X_val, y_val):
         print("Optimizing LightGBM...")
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 5000),
-                'max_depth': trial.suggest_int('max_depth', -1, 20),
-                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
-                'num_leaves': trial.suggest_int('num_leaves', 5, 150),
+                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
+                'max_depth': trial.suggest_int('max_depth', 3, 12),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+                'num_leaves': trial.suggest_int('num_leaves', 20, 100),
+                'metric': 'rmse',
+                'verbosity': -1
             }
-            model = LGBMRegressor(**param, random_state=42, verbose=-1)
-            model.fit(X_train, y_train, eval_set=[(X_val, y_val)])
+            model = LGBMRegressor(**param, random_state=42)
+            model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
             preds = model.predict(X_val)
             return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
-        best_model = LGBMRegressor(**study.best_params, random_state=42, verbose=-1)
-        best_model.fit(X_train, y_train)
-        joblib.dump({
-          "model": best_model,
-          "feature_names": X_train.columns.tolist()  # <-- вот они
-          }, os.path.join(self.models_dir, "lightgbm_model"))
+        best_params = study.best_params
+        best_params['metric'] = 'rmse'
+        best_model = LGBMRegressor(**best_params, random_state=42, verbosity=-1)
+        best_model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
+        
+        evals_result = best_model.evals_result_
+        self._plot_learning_curve(evals_result, "lightgbm")
+        
+        joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, 
+                    os.path.join(self.models_dir, "lightgbm_model"))
         return best_model
 
     def train_catboost(self, X_train, y_train, X_val, y_val):
         print("Optimizing CatBoost...")
         def objective(trial):
             param = {
-                'iterations': trial.suggest_int('iterations', 100, 5000),
-                'depth': trial.suggest_int('depth', 1, 16),
-                'learning_rate': trial.suggest_float('learning_rate', 0.001, 0.5),
-                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 20),
+                'iterations': trial.suggest_int('iterations', 100, 1000),
+                'depth': trial.suggest_int('depth', 4, 10),
+                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
+                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+                'eval_metric': 'RMSE',
+                'verbose': False
             }
-            model = CatBoostRegressor(**param, random_seed=42, verbose=False)
+            model = CatBoostRegressor(**param, random_seed=42)
             model.fit(X_train, y_train, eval_set=(X_val, y_val))
             preds = model.predict(X_val)
             return np.sqrt(mean_squared_error(y_val, preds))
@@ -106,13 +144,17 @@ class ModelTrainer:
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
         
-        best_model = CatBoostRegressor(**study.best_params, random_seed=42, verbose=False)
-        best_model.fit(X_train, y_train)
-        # Заменили нативный save_model на joblib для единообразия
-        joblib.dump({
-          "model": best_model,
-          "feature_names": X_train.columns.tolist()  # <-- вот они
-          }, os.path.join(self.models_dir, "catboost_model"))
+        best_params = study.best_params
+        best_params['verbose'] = False
+        best_model = CatBoostRegressor(**best_params, random_seed=42)
+        best_model.fit(X_train, y_train, eval_set=(X_val, y_val))
+        
+        eval_metrics = best_model.get_evals_result()
+        # CatBoost results are slightly different format
+        self._plot_learning_curve(eval_metrics, "catboost")
+        
+        joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, 
+                    os.path.join(self.models_dir, "catboost_model"))
         return best_model
 
 

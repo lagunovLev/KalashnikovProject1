@@ -7,7 +7,7 @@ from src.stages import (
     combine_data, clean_data, filter_outliers, 
     feature_engineering, visualize_data, 
     evaluate_models, plot_feature_importance,
-    complete_task
+    create_production_plan, complete_task
 )
 from src.models_utils import ModelTrainer, get_data_splits
 import io
@@ -79,15 +79,20 @@ def run_pipeline(args):
         evaluate_models(X_test, y_test, paths['models_dir'], config)
 
     # --- Stage 8: Plots ---
-    #if args.stage <= 8:
-    #    plot_feature_importance(paths['models_dir'], paths['reports_dir'], config)
+    if args.stage <= 8:
+        plot_feature_importance(paths['models_dir'], paths['reports_dir'], config)
 
+    # --- Stage 9: Production Plan ---
     if args.stage <= 9:
-        complete_task(paths['models_dir'], paths['features_data'], paths['task'], paths['task_output'], config)
+        create_production_plan(paths['raw_production'], paths['production_plan'], config)
+
+    # --- Stage 10: Complete Task ---
+    if args.stage <= 10:
+        complete_task(paths['models_dir'], paths['combined_data'], paths['production_plan'], paths['task_output'], config)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalashnikov ML Pipeline")
-    parser.add_argument("--stage", type=int, default=1, help="Start from this stage (1-8)")
+    parser.add_argument("--stage", type=int, default=1, help="Start from this stage (1-10)")
     parser.add_argument("--model", type=str, default="all", choices=["all", "xgboost", "lightgbm", "catboost"], help="Model to train")
     
     args = parser.parse_args()
