@@ -25,7 +25,7 @@ training:
   test_size: 0.2
   val_size: 0.2
   random_state: 42
-  optuna_trials: 50 # Увеличиваем для качественного подбора
+  optuna_trials: 100 # Максимально широкий поиск
   models: ["xgboost", "lightgbm", "catboost"]
 
 # Параметры чтения (автоматически определяются или задаются здесь)
