@@ -3,6 +3,7 @@ import joblib
 import pandas as pd
 import numpy as np
 import optuna
+import matplotlib.pyplot as plt
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
@@ -12,9 +13,8 @@ from sklearn.metrics import mean_squared_error
 def get_data_splits(df, config):
     """Разделение данных на train/val/test."""
     target = config['features']['target_column']
-    date_col = config['features']['date_column']
     
-    X = df.drop(columns=[target, date_col], errors='ignore')
+    X = df.drop(columns=[target], errors='ignore')
     y = df[target]
     
     X_train, X_temp, y_train, y_temp = train_test_split(
@@ -30,8 +30,6 @@ def get_data_splits(df, config):
     
     return X_train, X_val, X_test, y_train, y_val, y_test
 
-
-import matplotlib.pyplot as plt
 
 class ModelTrainer:
     def __init__(self, config):
@@ -67,11 +65,14 @@ class ModelTrainer:
         print("Optimizing XGBoost...")
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
-                'max_depth': trial.suggest_int('max_depth', 3, 10),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                'n_estimators': trial.suggest_int('n_estimators', 200, 2000),
+                'max_depth': trial.suggest_int('max_depth', 3, 12),
+                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2, log=True),
+                'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+                'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+                'min_child_weight': trial.suggest_int('min_child_weight', 1, 10),
+                'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 1.0, log=True),
+                'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 1.0, log=True),
                 'eval_metric': 'rmse'
             }
             model = XGBRegressor(**param, random_state=42)
@@ -98,10 +99,14 @@ class ModelTrainer:
         print("Optimizing LightGBM...")
         def objective(trial):
             param = {
-                'n_estimators': trial.suggest_int('n_estimators', 100, 1000),
-                'max_depth': trial.suggest_int('max_depth', 3, 12),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'num_leaves': trial.suggest_int('num_leaves', 20, 100),
+                'n_estimators': trial.suggest_int('n_estimators', 200, 2000),
+                'max_depth': trial.suggest_int('max_depth', 3, 15),
+                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2, log=True),
+                'num_leaves': trial.suggest_int('num_leaves', 20, 300),
+                'feature_fraction': trial.suggest_float('feature_fraction', 0.6, 1.0),
+                'bagging_fraction': trial.suggest_float('bagging_fraction', 0.6, 1.0),
+                'bagging_freq': trial.suggest_int('bagging_freq', 1, 7),
+                'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
                 'metric': 'rmse',
                 'verbosity': -1
             }
@@ -129,10 +134,14 @@ class ModelTrainer:
         print("Optimizing CatBoost...")
         def objective(trial):
             param = {
-                'iterations': trial.suggest_int('iterations', 100, 1000),
-                'depth': trial.suggest_int('depth', 4, 10),
-                'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3),
-                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1, 10),
+                'iterations': trial.suggest_int('iterations', 200, 2000),
+                'depth': trial.suggest_int('depth', 4, 12),
+                'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.2, log=True),
+                'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1e-2, 10.0, log=True),
+                'random_strength': trial.suggest_float('random_strength', 1e-8, 10.0, log=True),
+                'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+                'od_type': 'Iter',
+                'od_wait': 50,
                 'eval_metric': 'RMSE',
                 'verbose': False
             }
@@ -150,7 +159,6 @@ class ModelTrainer:
         best_model.fit(X_train, y_train, eval_set=(X_val, y_val))
         
         eval_metrics = best_model.get_evals_result()
-        # CatBoost results are slightly different format
         self._plot_learning_curve(eval_metrics, "catboost")
         
         joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, 
@@ -159,31 +167,17 @@ class ModelTrainer:
 
 
 def load_boosting_model(filepath):
-    """
-    Загружает модель, сохранённую через joblib.
-    Возвращает готовый sklearn-совместимый объект.
-    """
     if not os.path.exists(filepath):
-        raise FileNotFoundError(f"Файл модели не найден: {filepath}")
+        raise FileNotFoundError(f"File not found: {filepath}")
     bundle = joblib.load(filepath)
     return bundle["model"], bundle["feature_names"]
 
 
 def predict_from_dict(model, data_dict, feature_names):
-    """
-    Принимает joblib-модель, словарь с признаками и эталонный список имён признаков.
-    Возвращает предсказание (float).
-    """
-    # 1. Проверка полноты данных
     missing = [f for f in feature_names if f not in data_dict]
     if missing:
-        raise KeyError(f"В переданных данных отсутствуют признаки: {missing}")
+        raise KeyError(f"Missing features: {missing}")
 
-    # 2. Формируем DataFrame в строгом порядке колонок (как при обучении)
     df_input = pd.DataFrame([data_dict])[feature_names]
-
-    # 3. Предсказание
     pred = model.predict(df_input)
-
-    # 4. Возвращаем скалярное значение
     return float(pred[0]) if hasattr(pred, '__len__') else float(pred)
