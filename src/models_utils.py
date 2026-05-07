@@ -9,6 +9,7 @@ from lightgbm import LGBMRegressor
 from catboost import CatBoostRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
+from sklearn.metrics import r2_score
 
 def get_data_splits(df, config):
     """Разделение данных на train/val/test."""
@@ -44,28 +45,23 @@ class ModelTrainer:
         try:
             if model_name == "xgboost":
                 train_key, val_key = 'validation_0', 'validation_1'
-                metric = 'rmse' if 'rmse' in eval_results[train_key] else list(eval_results[train_key].keys())[0]
-                train_vals = eval_results[train_key][metric]
-                val_vals = eval_results[val_key][metric]
             elif model_name == "lightgbm":
                 train_key = 'training' if 'training' in eval_results else 'valid_0'
                 val_key = 'valid_1'
-                metric = 'rmse' if 'rmse' in eval_results[train_key] else 'l2' if 'l2' in eval_results[train_key] else list(eval_results[train_key].keys())[0]
-                train_vals = eval_results[train_key][metric]
-                val_vals = eval_results[val_key][metric]
-                # Если метрика L2 (MSE), извлекаем корень для приведения к RMSE
-                if metric == 'l2':
-                    train_vals = [np.sqrt(x) for x in train_vals]
-                    val_vals = [np.sqrt(x) for x in val_vals]
             elif model_name == "catboost":
-                train_vals = eval_results['learn']['RMSE']
-                val_vals = eval_results['validation']['RMSE']
-            
+                train_key, val_key = 'learn', 'validation'
+            else:
+                return  
+            # Универсальный поиск ключа метрики (r2 или R2)
+            metric = 'r2' if 'r2' in eval_results[train_key] else 'R2' if 'R2' in eval_results[train_key] else list(eval_results[train_key].keys())[0]
+            train_vals = eval_results[train_key][metric]
+            val_vals = eval_results[val_key][metric]
+
             plt.plot(train_vals, label='Train')
             plt.plot(val_vals, label='Validation')
             plt.title(f'Learning Curve: {model_name}')
             plt.xlabel('Iterations')
-            plt.ylabel('RMSE') # Меняем Score на RMSE
+            plt.ylabel('R²')
             plt.legend()
             plt.savefig(os.path.join(self.reports_dir, f"learning_curve_{model_name}.png"))
         except Exception as e:
@@ -93,7 +89,7 @@ class ModelTrainer:
             model = XGBRegressor(**param, random_state=42)
             model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
             preds = model.predict(X_val)
-            return np.sqrt(mean_squared_error(y_val, preds))
+            return r2_score(y_val, preds)
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
@@ -125,7 +121,7 @@ class ModelTrainer:
             model = LGBMRegressor(**param, random_state=42)
             model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
             preds = model.predict(X_val)
-            return np.sqrt(mean_squared_error(y_val, preds))
+            return r2_score(y_val, preds)
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
@@ -156,7 +152,7 @@ class ModelTrainer:
             model = CatBoostRegressor(**param, random_seed=42)
             model.fit(X_train, y_train, eval_set=(X_val, y_val))
             preds = model.predict(X_val)
-            return np.sqrt(mean_squared_error(y_val, preds))
+            return r2_score(y_val, preds)
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
