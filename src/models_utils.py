@@ -10,6 +10,7 @@ from catboost import CatBoostRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error
 from sklearn.metrics import r2_score
+from optuna.visualization import plot_slice
 
 def get_data_splits(df, config):
     """Разделение данных на train/val/test."""
@@ -69,6 +70,22 @@ class ModelTrainer:
         finally:
             plt.close()
 
+    def _plot_r2_evolution(self, study, model_name):
+        df = study.trials_dataframe()
+
+        # Вычисляем кумулятивный максимум (лучший результат на текущий момент)
+        df['best_r2'] = df['user_attrs_r2'].cummax()
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(df['number'], df['best_r2'], '-', color='red', label='Лучший R²')
+
+        plt.xlabel('Номер испытания')
+        plt.ylabel('R²')
+        plt.title('История оптимизации R²')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig(os.path.join(self.reports_dir, f"learning_curve_r2_{model_name}.png"))
+
     def train_xgboost(self, X_train, y_train, X_val, y_val):
         print("Deeply Optimizing XGBoost...")
         def objective(trial):
@@ -89,7 +106,9 @@ class ModelTrainer:
             model = XGBRegressor(**param, random_state=42)
             model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
             preds = model.predict(X_val)
-            return r2_score(y_val, preds)
+            r2 = r2_score(y_val, preds)
+            trial.set_user_attr("r2", r2)
+            return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
@@ -97,6 +116,7 @@ class ModelTrainer:
         best_model = XGBRegressor(**study.best_params, random_state=42)
         best_model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)], verbose=False)
         self._plot_learning_curve(best_model.evals_result(), "xgboost")
+        self._plot_r2_evolution(study, "xgboost")
         joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, os.path.join(self.models_dir, "xgboost_model"))
         return best_model
 
@@ -121,7 +141,9 @@ class ModelTrainer:
             model = LGBMRegressor(**param, random_state=42)
             model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
             preds = model.predict(X_val)
-            return r2_score(y_val, preds)
+            r2 = r2_score(y_val, preds)
+            trial.set_user_attr("r2", r2)
+            return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
@@ -129,6 +151,7 @@ class ModelTrainer:
         best_model = LGBMRegressor(**study.best_params, random_state=42, verbosity=-1)
         best_model.fit(X_train, y_train, eval_set=[(X_train, y_train), (X_val, y_val)])
         self._plot_learning_curve(best_model.evals_result_, "lightgbm")
+        self._plot_r2_evolution(study, "lightgbm")
         joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, os.path.join(self.models_dir, "lightgbm_model"))
         return best_model
 
@@ -152,7 +175,9 @@ class ModelTrainer:
             model = CatBoostRegressor(**param, random_seed=42)
             model.fit(X_train, y_train, eval_set=(X_val, y_val))
             preds = model.predict(X_val)
-            return r2_score(y_val, preds)
+            r2 = r2_score(y_val, preds)
+            trial.set_user_attr("r2", r2)
+            return np.sqrt(mean_squared_error(y_val, preds))
 
         study = optuna.create_study(direction='minimize')
         study.optimize(objective, n_trials=self.trials)
@@ -162,6 +187,7 @@ class ModelTrainer:
         best_model = CatBoostRegressor(**best_params, random_seed=42)
         best_model.fit(X_train, y_train, eval_set=(X_val, y_val))
         self._plot_learning_curve(best_model.get_evals_result(), "catboost")
+        self._plot_r2_evolution(study, "catboost")
         joblib.dump({"model": best_model, "feature_names": X_train.columns.tolist()}, os.path.join(self.models_dir, "catboost_model"))
         return best_model
 
